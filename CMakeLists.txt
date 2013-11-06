@@ -8,6 +8,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
+  geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -103,16 +104,16 @@ include_directories(
 # )
 
 ## Declare a cpp executable
-# add_executable(youbot_whackamole_node src/youbot_whackamole_node.cpp)
+add_executable(youbot_whackamole_robot_position_node src/youbot_whackamole_robot_position.cpp)
 
 ## Add cmake target dependencies of the executable/library
 ## as an example, message headers may need to be generated before nodes
 # add_dependencies(youbot_whackamole_node youbot_whackamole_generate_messages_cpp)
 
 ## Specify libraries to link a library or executable target against
-# target_link_libraries(youbot_whackamole_node
-#   ${catkin_LIBRARIES}
-# )
+ target_link_libraries(youbot_whackamole_robot_position_node
+   ${catkin_LIBRARIES}
+ )
 
 #############
 ## Install ##
