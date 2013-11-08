@@ -115,6 +115,13 @@ add_executable(youbot_whackamole_robot_position_node src/youbot_whackamole_robot
    ${catkin_LIBRARIES}
  )
 
+ ## Declare a cpp executable
+ add_executable(youbot_whackamole_arm_position_node src/youbot_whackamole_arm_position.cpp)
+ ## Specify libraries to link a library or executable target against
+ target_link_libraries(youbot_whackamole_arm_position_node
+   ${catkin_LIBRARIES}
+ )
+
 #############
 ## Install ##
 #############
