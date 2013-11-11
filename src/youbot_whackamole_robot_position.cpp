@@ -11,34 +11,42 @@
 #define LASER_ANGLE_THRESH_FRONT 0.05f
 
 float dist_left_avg, dist_front_avg, angle_left_avg;
-#define avg_merge 0.4f
+#define avg_merge 0.5f
 
 // Desired position constants
 //dist fronts: 2.1, 1.5, 0.9, 0.3
 #define ANGLE_LEFT_DESIRED 0.0f
-#define ANGLE_LEFT_SETTLE_THRESHOLD 0.05f
-#define ANGLE_LEFT_ACCEPTABLE_RANGE 0.3f
+#define ANGLE_LEFT_SETTLE_THRESHOLD 0.03f
+#define ANGLE_LEFT_ACCEPTABLE_RANGE 0.5f
+#define ANGLE_LEFT_SETTLE_STEPS 4
 #define DIST_LEFT_RANGE_MIN 0.10f
-#define DIST_LEFT_RANGE_MAX 0.5f
-#define DIST_LEFT_DESIRED 0.27f
+#define DIST_LEFT_RANGE_MAX 1.0f
+#define DIST_LEFT_DESIRED 0.26f
 #define DIST_LEFT_SETTLE_THRESHOLD 0.05f
+#define DIST_LEFT_SETTLE_STEPS 4
 #define DIST_FRONT_RANGE_MIN 0.15f
 #define DIST_FRONT_RANGE_MAX 2.25f
-#define DIST_FRONT_SETTLE_THRESHOLD 0.05f
+#define DIST_FRONT_SETTLE_THRESHOLD 0.03f
+#define DIST_FRONT_SETTLE_STEPS 5
+#define ALL_SETTLE_STEPS 6
 
 #define NUM_ROBOT_POSITIONS 4
-float DIST_FRONT_POSITIONS[NUM_ROBOT_POSITIONS] = { 2.1f, 1.5f, 0.9f, 0.3f };
+float DIST_FRONT_POSITIONS[NUM_ROBOT_POSITIONS] = { 2.2f, 1.6f, 1.0f, 0.4f };
 int desired_position = -1;
+//counters for being in the desired robot position
+int front_settled=0, left_settled=0, ang_settled=0;
+int all_settled=0;
+ros::Time time_last_settled;
 
 //absolute x and y velocity limits
-#define MIN_Y_VELOCITY 0.05f
+#define MIN_Y_VELOCITY 0.1f
 #define MAX_Y_VELOCITY 0.2f
 #define Y_VELOCITY_KP 1.0f
 #define MIN_X_VELOCITY 0.1f
-#define MAX_X_VELOCITY 0.3f
+#define MAX_X_VELOCITY 0.6f
 #define X_VELOCITY_KP 1.0f
-#define MIN_ANG_VELOCITY 0.05f
-#define MAX_ANG_VELOCITY 0.2f
+#define MIN_ANG_VELOCITY 0.1f
+#define MAX_ANG_VELOCITY 0.3f
 #define ANG_VELOCITY_KP 1.0f
 
 //linearly interpolate two floats by a merge value.
@@ -85,25 +93,29 @@ void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
   float i=0;
   for (angle = scan->angle_min; angle < scan->angle_max; angle+=scan->angle_increment)
   {
-    //store points and compute the average dist from scans to the left
-    if (angle<LASER_ANGLE_THRESH_LEFT)
-    {
-      p.x=scan->ranges[i]*cos(angle);
-      p.y=scan->ranges[i]*sin(angle);
-      points_left[num_left++]=p;
-
-      if (num_left==1) dist_left=p.x;
-      else dist_left=(dist_left+p.x)/2.0f;
-    }
     //store points and compute the average dist from scans to the front
-    else if (angle>-LASER_ANGLE_THRESH_FRONT && angle<LASER_ANGLE_THRESH_FRONT)
+    if (angle>-LASER_ANGLE_THRESH_FRONT && angle<LASER_ANGLE_THRESH_FRONT)
     {
       p.x=scan->ranges[i]*cos(angle);
-      p.y=scan->ranges[i]*sin(angle);
+      p.y=scan->ranges[i]*-sin(angle);
       points_front[num_front++]=p;
 
       if (num_front==1) dist_front=p.x;
       else dist_front=(dist_front+p.x)/2.0f;
+    }
+    //store points and compute the average dist from scans to the left
+    else if (angle<LASER_ANGLE_THRESH_LEFT)
+    {
+      p.x=scan->ranges[i]*cos(angle);
+      p.y=scan->ranges[i]*-sin(angle);
+      //ignore points which might be 
+      if (dist_front_avg>0 && fabs(p.x)<dist_front_avg) {
+        points_left[num_left++]=p;
+
+        if (num_left==1) dist_left=p.y;
+        else dist_left=(dist_left+p.y)/2.0f;
+      }
+      //else ROS_WARN("Point (%f,%f) too frontal (>%f)",p.x,p.y,dist_front_avg);
     }
 
     i++;
@@ -209,7 +221,7 @@ int main(int argc, char **argv)
         //move to desired position
         //front distance down, linear x positive (negative error)
         //left distance down, linear y positive (negative error)
-        //left angle down, angular z negative (positive error)
+        //left angle down, angular z positive (negative error)
         geometry_msgs::Twist v;
         bool settled=true;
         //correct left distance
@@ -217,31 +229,67 @@ int main(int argc, char **argv)
         if (fabs(error)>DIST_LEFT_SETTLE_THRESHOLD)
         {
           settled=false;
+          left_settled=0;
           v.linear.y = aclamp(MIN_Y_VELOCITY, error*-Y_VELOCITY_KP, MAX_Y_VELOCITY);
         }
-        else v.linear.y=0;
+        else 
+        {
+          v.linear.y=0;
+          left_settled++;
+          if (left_settled < DIST_LEFT_SETTLE_STEPS) settled=false;
+        }
         //correct front distance
         error = DIST_FRONT_POSITIONS[desired_position]-dist_front_avg;
         if (fabs(error)>DIST_FRONT_SETTLE_THRESHOLD)
         {
           settled=false;
+          front_settled=0;
           v.linear.x = aclamp(MIN_X_VELOCITY, error*-X_VELOCITY_KP, MAX_X_VELOCITY);
         }
-        else v.linear.x=0;
+        else 
+        {
+          v.linear.x=0;
+          front_settled++;
+          if (front_settled < DIST_FRONT_SETTLE_STEPS) settled=false;
+        }
         //correct angle
         error = ANGLE_LEFT_DESIRED - angle_left_avg;
         if (fabs(error)>ANGLE_LEFT_SETTLE_THRESHOLD)
         {
           settled=false;
-          v.angular.z = aclamp(MIN_ANG_VELOCITY, error*ANG_VELOCITY_KP, MAX_ANG_VELOCITY);
+          ang_settled=0;
+          v.angular.z = aclamp(MIN_ANG_VELOCITY, error*-ANG_VELOCITY_KP, MAX_ANG_VELOCITY);
         }
-        else v.angular.z=0;
+        else 
+        {
+          v.angular.z=0;
+          ang_settled++;
+          if (ang_settled < ANGLE_LEFT_SETTLE_STEPS) settled=false;
+        }
 
         cmd_vel_pub.publish(v);
 
-        if (settled) desired_position=-1;
-      }
+        if (settled) 
+        {
+          all_settled++;
+          if (all_settled>=ALL_SETTLE_STEPS)
+          {
+            ROS_INFO("\n\nGot to position %d in %f secs\n",desired_position,(ros::Time::now()-time_last_settled).toSec());
+            desired_position=-1;
+          }
+        }
+        else all_settled=0;
+      } //end if in range and going to position
 
+    } //end if going to position
+    else
+    {
+      left_settled=0;
+      front_settled=0;
+      ang_settled=0;
+      all_settled=0;
+      desired_position=-1;
+      time_last_settled=ros::Time::now();
     }
 
     loop_rate.sleep();
