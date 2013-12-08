@@ -1,0 +1,5 @@
+to save an image:
+
+./rclick_on_image.sh &>/dev/null
+
+
