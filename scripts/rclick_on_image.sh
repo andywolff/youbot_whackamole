@@ -1,3 +1,4 @@
+#!/bin/bash
 #store the currently-active window
 export old_window=$(xdotool getactivewindow)
 #get all windows that match the name
@@ -11,7 +12,7 @@ eval $stuff
 #activate the desired window
 xdotool windowactivate $my_window
 #move the mouse over it
-xdotool mousemove --window $my_window 1 1
+xdotool mousemove --window $my_window 20 20
 #right click
 xdotool click --window $my_window 3
 #move the mouse back to its original position

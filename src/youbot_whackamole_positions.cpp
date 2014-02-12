@@ -1,4 +1,5 @@
 #include <ros/ros.h>
+#include <std_msgs/Empty.h>
 #include <std_msgs/Int16.h>
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/Point.h>
@@ -49,8 +50,9 @@ float robot_dist_left_avg, robot_dist_front_avg, robot_angle_left_avg;
 #define ROBOT_ALL_SETTLE_STEPS 6
 
 #define NUM_ROBOT_POSITIONS 4
-float ROBOT_DIST_FRONT_POSITIONS[NUM_ROBOT_POSITIONS] = { 2.2f, 1.6f, 1.0f, 0.4f };
+float ROBOT_DIST_FRONT_POSITIONS[NUM_ROBOT_POSITIONS] = { 2.3f, 1.7f, 1.1f, 0.5f };
 int desired_robot_position = -1;
+int robot_position = -1;
 //counters for being in the desired robot position
 int robot_front_settled=0, robot_left_settled=0, robot_ang_settled=0;
 int robot_all_settled=0;
@@ -74,6 +76,13 @@ void jointStateCallback(const sensor_msgs::JointState::ConstPtr& msg);
 void armPositionCallback(const std_msgs::Int16::ConstPtr& armPos);
 void pubArmPosCmd(int armPosCmd);
 bool armCloseToGoal();
+
+/// Publishes a message when a mole is whacked
+ros::Publisher whack_impact_pub;
+/// Publishes a message when a whack is complete
+ros::Publisher whack_complete_pub;
+/// Publishes a message when the robot has reached a position
+ros::Publisher robot_position_arrive_pub;
 
 // Publishes joint position commands
 ros::Publisher arm_pos_pub;
@@ -101,6 +110,8 @@ double jointMin[] = {0.01006921, 0.01006921, -5.0264, 0.0221391, 0.11062};
 #define RIGHT_UP 5
 #define RIGHT_WHACK 6
 
+//which position the arm is currently in
+int arm_position = -1;
 //which arm position to move the arm to
 int desired_arm_position=-1;
 //whether the arm should whack a mole when it reaches its desired position
@@ -216,8 +227,9 @@ bool armCloseToGoal()
 void armPositionCallback(const std_msgs::Int16::ConstPtr& armPos) {
   int ap = armPos->data;
   if (ap>=1 && ap<=3) {
-    ROS_INFO("Whacking mole %d",ap);
+    ROS_INFO("Whacking mole %d",ap-1+robot_position);
     desired_arm_position=ap*2-1; //1,3,5 to whack
+    arm_position=ap;
     should_whack=true;
   }
   else ROS_WARN("Invalid arm position command: %d",ap);
@@ -261,7 +273,20 @@ void robotPositionCallback(const std_msgs::Int16::ConstPtr& position)
 {
   int p = position->data;
   ROS_INFO("Received robot position command: %d",p);
-  if (p>=0 && p<NUM_ROBOT_POSITIONS) desired_robot_position=p;
+  if (p>=0 && p<NUM_ROBOT_POSITIONS) {
+    desired_robot_position=p;
+    robot_position=p;
+  }
+}
+
+//receive init command. moves robot and arm to center positions
+void robotInitCallback(const std_msgs::Empty::ConstPtr& position)
+{
+  desired_robot_position=2;
+  robot_position=2;
+  desired_arm_position=3; //1,3,5 to whack
+  arm_position=2;
+  should_whack=false;
 }
 
 //compute the distance and angle to left and front walls from laser scan
@@ -369,8 +394,16 @@ int main(int argc, char **argv)
   // Subscribes to joint states
   ros::Subscriber joint_state_sub = n.subscribe("joint_states", 1000, jointStateCallback);
 
+  ros::Subscriber init_sub = n.subscribe("whackamole/robot_init",1000,robotInitCallback);
+
   // Set the correct size for the arm positions vector
   armJointPositions.resize(NUM_ARM_JOINTS); //TODO:change that
+  
+  whack_impact_pub = n.advertise<std_msgs::Int16>("whackamole/whack_impact",1);
+  whack_complete_pub = 
+    n.advertise<std_msgs::Int16>("whackamole/whack_complete",1);
+  robot_position_arrive_pub =
+    n.advertise<std_msgs::Int16>("whackamole/robot_position_arrive",1);
 
   // Set up joint values for the various arm positions
   initPosJoints();
@@ -403,10 +436,19 @@ int main(int argc, char **argv)
         {
           desired_arm_position--;
           should_whack=false;
+          ROS_INFO("Whacked mole %d",
+              (desired_arm_position/2+(robot_position-1)*2));
+          std_msgs::Int16 msg;
+          msg.data=(desired_arm_position/2+(robot_position-1)*2);
+          whack_impact_pub.publish(msg);
         }
         else 
         {
-          ROS_INFO("Done whacking mole %d",(desired_arm_position+1)/2);
+          ROS_INFO("Done whacking mole %d",
+              (desired_arm_position/2+(robot_position-1)*2));
+          std_msgs::Int16 msg;
+          msg.data=(desired_arm_position/2+(robot_position-1)*2);
+          whack_complete_pub.publish(msg);
           desired_arm_position=-1;
         }
       }
@@ -518,6 +560,9 @@ int main(int argc, char **argv)
           if (robot_all_settled>=ROBOT_ALL_SETTLE_STEPS)
           {
             ROS_INFO("\n\nGot to position %d in %f secs\n",desired_robot_position,(ros::Time::now()-time_last_settled).toSec());
+            std_msgs::Int16 msg;
+            msg.data=desired_robot_position;
+            robot_position_arrive_pub.publish(msg);
             desired_robot_position=-1;
           }
         }
